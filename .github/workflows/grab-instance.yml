@@ -1,0 +1,59 @@
+name: Grab Oracle Free Ampere A1
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  try-launch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OCI CLI
+        run: |
+          pip install oci-cli --quiet
+
+      - name: Configure OCI
+        env:
+          OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+        run: |
+          mkdir -p ~/.oci
+          echo "$OCI_API_KEY" > ~/.oci/oci_api_key.pem
+          chmod 600 ~/.oci/oci_api_key.pem
+          cat > ~/.oci/config << EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=ap-mumbai-1
+          key_file=${HOME}/.oci/oci_api_key.pem
+          EOF
+          sed -i 's/^[[:space:]]*//' ~/.oci/config
+          chmod 600 ~/.oci/config
+
+      - name: Attempt Instance Launch
+        id: launch
+        run: |
+          chmod +x ./launch.sh
+          ./launch.sh
+        env:
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_SUBNET_OCID: ${{ secrets.OCI_SUBNET_OCID }}
+          OCI_IMAGE_OCID: ${{ secrets.OCI_IMAGE_OCID }}
+          OCI_AVAILABILITY_DOMAIN: ${{ secrets.OCI_AVAILABILITY_DOMAIN }}
+          OCI_SSH_PUBLIC_KEY: ${{ secrets.OCI_SSH_PUBLIC_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+
+      - name: Disable workflow on success
+        if: steps.launch.outputs.success == 'true'
+        run: |
+          echo "============================================"
+          echo "  INSTANCE CREATED SUCCESSFULLY!"
+          echo "  Go disable this workflow in GitHub Actions"
+          echo "============================================"

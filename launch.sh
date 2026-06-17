@@ -39,7 +39,7 @@ attempt_launch() {
     echo "  Attempt ${attempt}/${RETRIES} — $(date '+%Y-%m-%d %H:%M:%S UTC')"
     echo "══════════════════════════════════════════"
     
-    RESULT=$(oci compute instance launch \
+    RESULT=$(timeout 30 oci compute instance launch \
         --compartment-id "$COMPARTMENT" \
         --availability-domain "$AD" \
         --shape "$SHAPE" \
@@ -49,9 +49,6 @@ attempt_launch() {
         --display-name "$DISPLAY_NAME" \
         --assign-public-ip true \
         --metadata "{\"ssh_authorized_keys\": \"${SSH_KEY}\"}" \
-        --wait-for-state RUNNING \
-        --wait-interval-seconds 30 \
-        --max-wait-seconds 600 \
         2>&1) && LAUNCH_OK=true || LAUNCH_OK=false
     
     if $LAUNCH_OK; then

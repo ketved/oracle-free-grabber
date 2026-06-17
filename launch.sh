@@ -1,6 +1,4 @@
 #!/bin/bash
-# launch.sh — Attempt to grab an Oracle Free Tier Ampere A1 instance
-
 set -euo pipefail
 
 COMPARTMENT="${OCI_COMPARTMENT_OCID}"
@@ -20,14 +18,11 @@ WAIT_SECONDS=90
 
 notify_success() {
     local ip="$1"
-    local msg="Oracle Ampere A1 instance created! IP: ${ip}"
+    local msg="Oracle Ampere A1 created! IP: ${ip}"
     echo "$msg"
     if [[ -n "$NTFY" ]]; then
-        curl -s \
-            -H "Title: Oracle Instance Created!" \
-            -H "Priority: urgent" \
-            -H "Tags: white_check_mark,rocket" \
-            -d "$msg" \
+        curl -s -H "Title: Oracle Instance Created!" -H "Priority: urgent" \
+            -H "Tags: white_check_mark,rocket" -d "$msg" \
             "https://ntfy.sh/${NTFY}" || true
     fi
 }
@@ -35,11 +30,9 @@ notify_success() {
 attempt_launch() {
     local attempt=$1
     echo ""
-    echo "══════════════════════════════════════════"
-    echo "  Attempt ${attempt}/${RETRIES} — $(date '+%Y-%m-%d %H:%M:%S UTC')"
-    echo "══════════════════════════════════════════"
-    
-    RESULT=$(timeout 30 oci compute instance launch \
+    echo "══ Attempt ${attempt}/${RETRIES} — $(date '+%H:%M:%S UTC') ══"
+
+    RESULT=$(oci compute instance launch \
         --compartment-id "$COMPARTMENT" \
         --availability-domain "$AD" \
         --shape "$SHAPE" \
@@ -49,78 +42,63 @@ attempt_launch() {
         --display-name "$DISPLAY_NAME" \
         --assign-public-ip true \
         --metadata "{\"ssh_authorized_keys\": \"${SSH_KEY}\"}" \
+        --cli-read-timeout 120 \
+        --cli-connect-timeout 30 \
         2>&1) && LAUNCH_OK=true || LAUNCH_OK=false
-    
+
     if $LAUNCH_OK; then
-        echo "SUCCESS! Instance is RUNNING."
-        INSTANCE_ID=$(echo "$RESULT" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-print(data.get('data', {}).get('id', 'unknown'))
-" 2>/dev/null || echo "unknown")
-        
-        if [[ "$INSTANCE_ID" != "unknown" ]]; then
-            sleep 10
-            IP=$(oci compute instance list-vnics \
-                --instance-id "$INSTANCE_ID" \
-                --query 'data[0]."public-ip"' \
-                --raw-output 2>/dev/null || echo "check-console")
-        else
-            IP="check-console"
-        fi
-        
-        echo "Instance ID: ${INSTANCE_ID}"
-        echo "Public IP:   ${IP}"
+        echo "SUCCESS!"
+        IP=$(echo "$RESULT" | python3 -c "
+import sys,json
+d=json.load(sys.stdin).get('data',{})
+print(d.get('id','unknown'))
+" 2>/dev/null || echo "check-console")
+        echo "Instance: ${IP}"
         notify_success "$IP"
         echo "success=true" >> "$GITHUB_OUTPUT"
         return 0
     else
-        if echo "$RESULT" | grep -qi "out of capacity\|out of host capacity\|capacity constraint"; then
-            echo "  ↳ Out of capacity (expected). Will retry..."
-            return 1
-        elif echo "$RESULT" | grep -qi "too many requests\|rate limit"; then
-            echo "  ↳ Rate limited. Backing off..."
-            sleep 60
-            return 1
-        elif echo "$RESULT" | grep -qi "limit exceeded\|quota"; then
-            echo "  ✗ Account limit reached. You may already have an instance."
-            echo "success=false" >> "$GITHUB_OUTPUT"
-            exit 1
-        else
-            echo "  ✗ Unexpected error (will retry):"
-            echo "$RESULT" | head -5
-            return 1
-        fi
+        # Extract just the error code/message
+        ERR=$(echo "$RESULT" | grep -oi "out of capacity\|out of host capacity\|capacity constraint\|too many requests\|rate limit\|limit exceeded\|quota\|timed out\|InternalError\|ServiceError" | head -1 || true)
+
+        case "$ERR" in
+            *capacity*|*Capacity*)
+                echo "  ↳ Out of capacity"
+                return 1 ;;
+            *"rate limit"*|*"too many"*)
+                echo "  ↳ Rate limited, extra wait..."
+                sleep 60
+                return 1 ;;
+            *"limit exceeded"*|*quota*)
+                echo "  ✗ Account quota reached — check OCI console"
+                echo "success=false" >> "$GITHUB_OUTPUT"
+                exit 1 ;;
+            *"timed out"*)
+                echo "  ↳ Timeout (normal)"
+                return 1 ;;
+            *)
+                echo "  ↳ Other error: $(echo "$RESULT" | grep -o '"message": "[^"]*"' | head -1)"
+                return 1 ;;
+        esac
     fi
 }
 
-echo "╔══════════════════════════════════════════════╗"
-echo "║  Oracle Free Tier Ampere A1 Grabber          ║"
-echo "║  Region: ap-mumbai-1                         ║"
-echo "║  Shape:  ${SHAPE} (${OCPUS} OCPU, ${MEMORY_GB}GB)  ║"
-echo "╚══════════════════════════════════════════════╝"
-echo ""
-echo "Verifying OCI CLI config..."
+echo "Oracle A1 Grabber | ap-mumbai-1 | ${SHAPE} ${OCPUS}CPU/${MEMORY_GB}GB"
+echo "Verifying OCI CLI..."
 oci iam region list --output table 2>/dev/null | head -5 && echo "OCI CLI OK" || {
-    echo "ERROR: OCI CLI config is broken. Check secrets."
-    exit 1
+    echo "ERROR: OCI config broken"; exit 1
 }
 
 for i in $(seq 1 $RETRIES); do
     if attempt_launch $i; then
-        echo ""
-        echo "Done! Go disable this workflow now."
+        echo "Done! Disable this workflow now."
         exit 0
     fi
-    
     if [[ $i -lt $RETRIES ]]; then
-        echo "  Waiting ${WAIT_SECONDS}s before retry..."
         sleep $WAIT_SECONDS
     fi
 done
 
-echo ""
-echo "All ${RETRIES} attempts failed (likely out of capacity)."
-echo "Next run in ~10 minutes via cron."
+echo "All ${RETRIES} attempts exhausted. Next cron run will retry."
 echo "success=false" >> "$GITHUB_OUTPUT"
 exit 0

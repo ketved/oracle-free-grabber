@@ -5,6 +5,10 @@ on:
     - cron: '*/10 * * * *'
   workflow_dispatch:
 
+concurrency:
+  group: oracle-grabber
+  cancel-in-progress: false
+
 jobs:
   try-launch:
     runs-on: ubuntu-latest

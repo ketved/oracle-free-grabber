@@ -15,8 +15,8 @@ MEMORY_GB=24
 DISPLAY_NAME="mf-system-ampere"
 SHAPE="VM.Standard.A1.Flex"
 
-RETRIES=3
-WAIT_SECONDS=90
+RETRIES=300
+WAIT_SECONDS=60
 
 notify_success() {
     local ip="$1"

@@ -15,8 +15,8 @@ MEMORY_GB=24
 DISPLAY_NAME="mf-system-ampere"
 SHAPE="VM.Standard.A1.Flex"
 
-RETRIES=300
-WAIT_SECONDS=60
+RETRIES=200
+WAIT_SECONDS=90
 
 notify_success() {
     local ip="$1"
@@ -87,8 +87,8 @@ print(data.get('data', {}).get('id', 'unknown'))
             echo "success=false" >> "$GITHUB_OUTPUT"
             exit 1
         else
-            echo "  ✗ Unexpected error:"
-            echo "$RESULT" | head -20
+            echo "  ✗ Unexpected error (will retry):"
+            echo "$RESULT" | head -5
             return 1
         fi
     fi

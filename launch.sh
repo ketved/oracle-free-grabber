@@ -29,8 +29,6 @@ for i in $(seq 1 $RETRIES); do
         --display-name "$DISPLAY_NAME" \
         --assign-public-ip true \
         --metadata "{\"ssh_authorized_keys\": \"${SSH_KEY}\"}" \
-        --cli-read-timeout 120 \
-        --cli-connect-timeout 30 \
         2>&1) && OK=true || OK=false
 
     if $OK; then

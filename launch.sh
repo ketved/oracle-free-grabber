@@ -12,25 +12,12 @@ OCPUS=4
 MEMORY_GB=24
 DISPLAY_NAME="mf-system-ampere"
 SHAPE="VM.Standard.A1.Flex"
-
 RETRIES=200
 WAIT_SECONDS=90
 
-notify_success() {
-    local ip="$1"
-    local msg="Oracle Ampere A1 created! IP: ${ip}"
-    echo "$msg"
-    if [[ -n "$NTFY" ]]; then
-        curl -s -H "Title: Oracle Instance Created!" -H "Priority: urgent" \
-            -H "Tags: white_check_mark,rocket" -d "$msg" \
-            "https://ntfy.sh/${NTFY}" || true
-    fi
-}
-
-attempt_launch() {
-    local attempt=$1
+for i in $(seq 1 $RETRIES); do
     echo ""
-    echo "══ Attempt ${attempt}/${RETRIES} — $(date '+%H:%M:%S UTC') ══"
+    echo "══ Attempt ${i}/${RETRIES} — $(date '+%H:%M:%S UTC') ══"
 
     RESULT=$(oci compute instance launch \
         --compartment-id "$COMPARTMENT" \
@@ -44,63 +31,40 @@ attempt_launch() {
         --metadata "{\"ssh_authorized_keys\": \"${SSH_KEY}\"}" \
         --cli-read-timeout 120 \
         --cli-connect-timeout 30 \
-        2>&1) && LAUNCH_OK=true || LAUNCH_OK=false
+        2>&1) && OK=true || OK=false
 
-    if $LAUNCH_OK; then
-        echo "SUCCESS!"
-        IP=$(echo "$RESULT" | python3 -c "
-import sys,json
-d=json.load(sys.stdin).get('data',{})
-print(d.get('id','unknown'))
-" 2>/dev/null || echo "check-console")
-        echo "Instance: ${IP}"
-        notify_success "$IP"
+    if $OK; then
+        echo "SUCCESS! Instance launched!"
+        echo "$RESULT" | tail -20
+        if [[ -n "$NTFY" ]]; then
+            curl -s -H "Title: Oracle Instance Created!" -H "Priority: urgent" \
+                -H "Tags: white_check_mark" -d "Instance created! Check OCI console for IP." \
+                "https://ntfy.sh/${NTFY}" || true
+        fi
         echo "success=true" >> "$GITHUB_OUTPUT"
-        return 0
-    else
-        # Extract just the error code/message
-        ERR=$(echo "$RESULT" | grep -oi "out of capacity\|out of host capacity\|capacity constraint\|too many requests\|rate limit\|limit exceeded\|quota\|timed out\|InternalError\|ServiceError" | head -1 || true)
-
-        case "$ERR" in
-            *capacity*|*Capacity*)
-                echo "  ↳ Out of capacity"
-                return 1 ;;
-            *"rate limit"*|*"too many"*)
-                echo "  ↳ Rate limited, extra wait..."
-                sleep 60
-                return 1 ;;
-            *"limit exceeded"*|*quota*)
-                echo "  ✗ Account quota reached — check OCI console"
-                echo "success=false" >> "$GITHUB_OUTPUT"
-                exit 1 ;;
-            *"timed out"*)
-                echo "  ↳ Timeout (normal)"
-                return 1 ;;
-            *)
-                *)
-                echo "  ↳ Other error. Full response:"
-                echo "$RESULT" | tail -30
-                return 1 ;;
-        esac
-    fi
-}
-
-echo "Oracle A1 Grabber | ap-mumbai-1 | ${SHAPE} ${OCPUS}CPU/${MEMORY_GB}GB"
-echo "Verifying OCI CLI..."
-oci iam region list --output table 2>/dev/null | head -5 && echo "OCI CLI OK" || {
-    echo "ERROR: OCI config broken"; exit 1
-}
-
-for i in $(seq 1 $RETRIES); do
-    if attempt_launch $i; then
-        echo "Done! Disable this workflow now."
         exit 0
     fi
+
+    # Show error (first 3 lines for brevity)
+    ERR=$(echo "$RESULT" | head -3)
+    if echo "$RESULT" | grep -qi "out of capacity\|out of host capacity"; then
+        echo "  Out of capacity"
+    elif echo "$RESULT" | grep -qi "too many requests\|rate limit"; then
+        echo "  Rate limited, extra wait"
+        sleep 60
+    elif echo "$RESULT" | grep -qi "limit exceeded\|quota"; then
+        echo "  QUOTA REACHED - check OCI console"
+        echo "$ERR"
+        exit 1
+    else
+        echo "  Error: $ERR"
+    fi
+
     if [[ $i -lt $RETRIES ]]; then
         sleep $WAIT_SECONDS
     fi
 done
 
-echo "All ${RETRIES} attempts exhausted. Next cron run will retry."
+echo "All attempts exhausted."
 echo "success=false" >> "$GITHUB_OUTPUT"
 exit 0

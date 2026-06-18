@@ -77,7 +77,9 @@ print(d.get('id','unknown'))
                 echo "  ↳ Timeout (normal)"
                 return 1 ;;
             *)
-                echo "  ↳ Other error: $(echo "$RESULT" | grep -o '"message": "[^"]*"' | head -1)"
+                *)
+                echo "  ↳ Other error. Full response:"
+                echo "$RESULT" | tail -30
                 return 1 ;;
         esac
     fi
